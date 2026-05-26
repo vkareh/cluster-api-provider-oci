@@ -5,9 +5,35 @@
 
 ## Example Spec for private cluster
 
-CAPOCI supports private clusters where the Kubernetes API Server Endpoint is a private IP Address
-and is accessible only within the VCN or peered VCNs. In order to use private clusters, the control plane
-endpoint subnet has to be marked as private. An example spec is given below.
+### Using networkVisibility (recommended)
+
+CAPOCI v0.25.0+ exposes `spec.networkSpec.apiServerLoadBalancer.networkVisibility` to control API server load balancer visibility (public or private). The default `Inherited` value preserves the legacy behavior of inferring visibility from the control plane endpoint subnet.
+
+| Value      | Description |
+|------------|-------------|
+| `Inherited` (default) | Matches the control-plane-endpoint subnet type, maintaining backwards compatibility. |
+| `Private`  | Creates a private load balancer reachable only within the VCN or peered VCNs. |
+| `Public`   | Creates a public load balancer with a public IP address. |
+
+> NOTE: The webhook rejects `networkVisibility: Public` when any control-plane-endpoint subnet is marked `type: private`, because OCI does not allow attaching a public load balancer to a private subnet.
+>
+> OCI does not support changing an existing API server load balancer between private and public visibility. Choose the desired visibility before creating the cluster.
+
+```yaml
+spec:
+  compartmentId: "${OCI_COMPARTMENT_ID}"
+  networkSpec:
+    apiServerLoadBalancer:
+      networkVisibility: Private
+```
+
+The `templates/cluster-template-local-vcn-peering.yaml` asset already includes this setting and can be used as a starting point.
+
+### Using subnet type (legacy approach)
+
+Before `networkVisibility` existed, CAPOCI inferred the API server exposure from the control-plane-endpoint subnet type. This workflow remains supported for backwards compatibility and is functionally equivalent to setting `networkVisibility: Inherited`.
+
+CAPOCI supports private clusters where the Kubernetes API server endpoint is a private IP address and is accessible only within the VCN or peered VCNs. In order to use private clusters with the legacy mechanism, the control-plane-endpoint subnet has to be marked as private. An example spec is given below.
 
 ```yaml
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
@@ -38,6 +64,8 @@ spec:
           role: worker
           type: private
 ```
+
+When using the legacy approach (or `networkVisibility: Inherited`), the API server endpoint visibility is derived from the control-plane-endpoint subnet type — ensure it is marked `type: private` to keep the API server address internal.
 
 ## Example spec for VCN Peering using Dynamic Routing Gateway (Local)
 

@@ -34,6 +34,8 @@ metadata:
 spec:
   compartmentId: "${OCI_COMPARTMENT_ID}"
   networkSpec:
+    apiServerLoadBalancer:
+      networkVisibility: Private
     vcnPeering:
       drg:
         id: "${DRG_ID}"

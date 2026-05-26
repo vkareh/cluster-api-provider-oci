@@ -1908,6 +1908,112 @@ func TestOCICluster_ValidateCreate(t *testing.T) {
 			},
 			expectErr: false,
 		},
+		{
+			name: "should reject networkVisibility=Public when control-plane-endpoint subnet is private",
+			c: &OCICluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: goodClusterName,
+				},
+				Spec: OCIClusterSpec{
+					Region:                "us-ashburn-1",
+					CompartmentId:         "ocid",
+					OCIResourceIdentifier: "uuid",
+					NetworkSpec: NetworkSpec{
+						Vcn: VCN{
+							CIDR: "10.0.0.0/16",
+							Subnets: []*Subnet{
+								{
+									Role: ControlPlaneRole,
+									Name: "cp-subnet",
+									CIDR: "10.0.0.0/24",
+								},
+								{
+									Role: ControlPlaneEndpointRole,
+									Name: "cp-endpoint-subnet",
+									CIDR: "10.0.1.0/24",
+									Type: Private,
+								},
+							},
+						},
+						APIServerLB: LoadBalancer{
+							NetworkVisibility: LBNetworkVisibilityPublic,
+						},
+					},
+				},
+			},
+			errorMgsShouldContain: "networkVisibility",
+			expectErr:             true,
+		},
+		{
+			name: "should allow networkVisibility=Private when control-plane-endpoint subnet is public",
+			c: &OCICluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: goodClusterName,
+				},
+				Spec: OCIClusterSpec{
+					Region:                "us-ashburn-1",
+					CompartmentId:         "ocid",
+					OCIResourceIdentifier: "uuid",
+					NetworkSpec: NetworkSpec{
+						Vcn: VCN{
+							CIDR: "10.0.0.0/16",
+							Subnets: []*Subnet{
+								{
+									Role: ControlPlaneRole,
+									Name: "cp-subnet",
+									CIDR: "10.0.0.0/24",
+								},
+								{
+									Role: ControlPlaneEndpointRole,
+									Name: "cp-endpoint-subnet",
+									CIDR: "10.0.1.0/24",
+									Type: Public,
+								},
+							},
+						},
+						APIServerLB: LoadBalancer{
+							NetworkVisibility: LBNetworkVisibilityPrivate,
+						},
+					},
+				},
+			},
+			expectErr: false,
+		},
+		{
+			name: "should allow networkVisibility=Inherited",
+			c: &OCICluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: goodClusterName,
+				},
+				Spec: OCIClusterSpec{
+					Region:                "us-ashburn-1",
+					CompartmentId:         "ocid",
+					OCIResourceIdentifier: "uuid",
+					NetworkSpec: NetworkSpec{
+						Vcn: VCN{
+							CIDR: "10.0.0.0/16",
+							Subnets: []*Subnet{
+								{
+									Role: ControlPlaneRole,
+									Name: "cp-subnet",
+									CIDR: "10.0.0.0/24",
+								},
+								{
+									Role: ControlPlaneEndpointRole,
+									Name: "cp-endpoint-subnet",
+									CIDR: "10.0.1.0/24",
+									Type: Private,
+								},
+							},
+						},
+						APIServerLB: LoadBalancer{
+							NetworkVisibility: LBNetworkVisibilityInherited,
+						},
+					},
+				},
+			},
+			expectErr: false,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1932,6 +2038,29 @@ func TestOCICluster_ValidateCreate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOCICluster_Default_NetworkVisibility(t *testing.T) {
+	g := gomega.NewWithT(t)
+	webhook := &OCIClusterWebhook{}
+
+	cluster := &OCICluster{}
+	err := webhook.Default(context.Background(), cluster)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(cluster.Spec.NetworkSpec.APIServerLB.NetworkVisibility).To(gomega.Equal(LBNetworkVisibilityInherited))
+
+	clusterWithVisibility := &OCICluster{
+		Spec: OCIClusterSpec{
+			NetworkSpec: NetworkSpec{
+				APIServerLB: LoadBalancer{
+					NetworkVisibility: LBNetworkVisibilityPublic,
+				},
+			},
+		},
+	}
+	err = webhook.Default(context.Background(), clusterWithVisibility)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(clusterWithVisibility.Spec.NetworkSpec.APIServerLB.NetworkVisibility).To(gomega.Equal(LBNetworkVisibilityPublic))
 }
 
 func TestOCIClusterWebhook_ValidateDelete(t *testing.T) {
@@ -2052,6 +2181,139 @@ func TestOCICluster_ValidateUpdate(t *testing.T) {
 			},
 			errorMgsShouldContain: "ociResourceIdentifier",
 			expectErr:             true,
+		},
+		{
+			name: "should allow legacy empty networkVisibility to default to inherited",
+			c: &OCICluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-test"},
+				Spec: OCIClusterSpec{
+					CompartmentId:         "ocid",
+					Region:                "old-region",
+					OCIResourceIdentifier: "uuid",
+					NetworkSpec: NetworkSpec{
+						APIServerLB: LoadBalancer{NetworkVisibility: LBNetworkVisibilityInherited},
+					},
+				},
+			},
+			old: &OCICluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-test"},
+				Spec: OCIClusterSpec{
+					CompartmentId:         "ocid",
+					Region:                "old-region",
+					OCIResourceIdentifier: "uuid",
+					NetworkSpec: NetworkSpec{
+						APIServerLB: LoadBalancer{NetworkVisibility: ""},
+					},
+				},
+			},
+			expectErr: false,
+		},
+		{
+			name: "shouldn't allow networkVisibility change from Inherited to Private",
+			c: &OCICluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-test"},
+				Spec: OCIClusterSpec{
+					CompartmentId:         "ocid",
+					Region:                "old-region",
+					OCIResourceIdentifier: "uuid",
+					NetworkSpec: NetworkSpec{
+						APIServerLB: LoadBalancer{NetworkVisibility: LBNetworkVisibilityPrivate},
+					},
+				},
+			},
+			old: &OCICluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-test"},
+				Spec: OCIClusterSpec{
+					CompartmentId:         "ocid",
+					Region:                "old-region",
+					OCIResourceIdentifier: "uuid",
+					NetworkSpec: NetworkSpec{
+						APIServerLB: LoadBalancer{NetworkVisibility: LBNetworkVisibilityInherited},
+					},
+				},
+			},
+			errorMgsShouldContain: "networkVisibility",
+			expectErr:             true,
+		},
+		{
+			name: "shouldn't allow networkVisibility change from empty to Private",
+			c: &OCICluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-test"},
+				Spec: OCIClusterSpec{
+					CompartmentId:         "ocid",
+					Region:                "old-region",
+					OCIResourceIdentifier: "uuid",
+					NetworkSpec: NetworkSpec{
+						APIServerLB: LoadBalancer{NetworkVisibility: LBNetworkVisibilityPrivate},
+					},
+				},
+			},
+			old: &OCICluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-test"},
+				Spec: OCIClusterSpec{
+					CompartmentId:         "ocid",
+					Region:                "old-region",
+					OCIResourceIdentifier: "uuid",
+					NetworkSpec: NetworkSpec{
+						APIServerLB: LoadBalancer{NetworkVisibility: ""},
+					},
+				},
+			},
+			errorMgsShouldContain: "networkVisibility",
+			expectErr:             true,
+		},
+		{
+			name: "shouldn't allow networkVisibility change from Public to Private",
+			c: &OCICluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-test"},
+				Spec: OCIClusterSpec{
+					CompartmentId:         "ocid",
+					Region:                "old-region",
+					OCIResourceIdentifier: "uuid",
+					NetworkSpec: NetworkSpec{
+						APIServerLB: LoadBalancer{NetworkVisibility: LBNetworkVisibilityPrivate},
+					},
+				},
+			},
+			old: &OCICluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-test"},
+				Spec: OCIClusterSpec{
+					CompartmentId:         "ocid",
+					Region:                "old-region",
+					OCIResourceIdentifier: "uuid",
+					NetworkSpec: NetworkSpec{
+						APIServerLB: LoadBalancer{NetworkVisibility: LBNetworkVisibilityPublic},
+					},
+				},
+			},
+			errorMgsShouldContain: "networkVisibility",
+			expectErr:             true,
+		},
+		{
+			name: "should allow unchanged networkVisibility Private to Private",
+			c: &OCICluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-test"},
+				Spec: OCIClusterSpec{
+					CompartmentId:         "ocid",
+					Region:                "old-region",
+					OCIResourceIdentifier: "uuid",
+					NetworkSpec: NetworkSpec{
+						APIServerLB: LoadBalancer{NetworkVisibility: LBNetworkVisibilityPrivate},
+					},
+				},
+			},
+			old: &OCICluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-test"},
+				Spec: OCIClusterSpec{
+					CompartmentId:         "ocid",
+					Region:                "old-region",
+					OCIResourceIdentifier: "uuid",
+					NetworkSpec: NetworkSpec{
+						APIServerLB: LoadBalancer{NetworkVisibility: LBNetworkVisibilityPrivate},
+					},
+				},
+			},
+			expectErr: false,
 		},
 		{
 			name: "should succeed",

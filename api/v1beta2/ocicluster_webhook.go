@@ -59,6 +59,10 @@ func (*OCIClusterWebhook) Default(_ context.Context, obj runtime.Object) error {
 		c.Spec.NetworkSpec.Vcn.NetworkSecurityGroup.List = c.NSGSpec()
 	}
 
+	if c.Spec.NetworkSpec.APIServerLB.NetworkVisibility == "" {
+		c.Spec.NetworkSpec.APIServerLB.NetworkVisibility = LBNetworkVisibilityInherited
+	}
+
 	return nil
 }
 
@@ -172,6 +176,17 @@ func (*OCIClusterWebhook) ValidateCreate(_ context.Context, obj runtime.Object) 
 	return nil, apierrors.NewInvalid(c.GroupVersionKind().GroupKind(), c.Name, allErrs)
 }
 
+// effectiveLBNetworkVisibility normalizes an empty string to Inherited so that clusters
+// created before this field existed (stored as "") compare equal to clusters where the
+// defaulting webhook has since set the field to Inherited. Without this, ValidateUpdate
+// would block updates on pre-existing clusters that were never assigned a networkVisibility value.
+func effectiveLBNetworkVisibility(visibility LBNetworkVisibility) LBNetworkVisibility {
+	if visibility == "" {
+		return LBNetworkVisibilityInherited
+	}
+	return visibility
+}
+
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type.
 func (*OCIClusterWebhook) ValidateDelete(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
 	c, ok := obj.(*OCICluster)
@@ -209,6 +224,16 @@ func (*OCIClusterWebhook) ValidateUpdate(_ context.Context, oldRaw, newObj runti
 
 	if c.Spec.CompartmentId != oldCluster.Spec.CompartmentId {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "compartmentId"), c.Spec.CompartmentId, "field is immutable"))
+	}
+
+	oldVisibility := effectiveLBNetworkVisibility(oldCluster.Spec.NetworkSpec.APIServerLB.NetworkVisibility)
+	newVisibility := effectiveLBNetworkVisibility(c.Spec.NetworkSpec.APIServerLB.NetworkVisibility)
+
+	// networkVisibility is immutable after creation — OCI does not support converting
+	// an existing load balancer between public and private visibility.
+	if newVisibility != oldVisibility {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "networkSpec", "apiServerLoadBalancer", "networkVisibility"),
+			c.Spec.NetworkSpec.APIServerLB.NetworkVisibility, "field is immutable"))
 	}
 
 	// If Skip field is true, ID field of VCN should be specified

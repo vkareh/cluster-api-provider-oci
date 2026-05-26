@@ -5,6 +5,8 @@ metadata:
   name: "${CLUSTER_NAME}"
 spec:
   networkSpec:
+    apiServerLoadBalancer:
+      networkVisibility: Private
     vcnPeering:
       drg:
         id: "${LOCAL_DRG_ID}"
